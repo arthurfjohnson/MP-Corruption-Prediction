@@ -1,0 +1,1525 @@
+---
+title: "FDI Impacts on Income Inequality"
+author: "Arthur Johnson"
+date: "2024-04-15"
+geometry: "left = 3cm, right = 3cm,top = 2cm,bottom = 2cm"
+output: pdf_document
+header-includes:
+  - |
+    ```{=latex}
+    \usepackage{fvextra}
+    \DefineVerbatimEnvironment{Highlighting}{Verbatim}{breaklines, commandchars=\\\{\}
+    }
+    \usepackage{lscape}
+    \newcommand{\blandscape}{\begin{landscape}}
+    \newcommand{\elandscape}{\end{landscape}}
+    ```
+---
+
+```{r setup, include=FALSE, echo=FALSE}
+library(AER)
+library(RColorBrewer)
+library(metafor)
+library(dplyr)   
+library(tidyr)  
+library(formatR)
+library(ggplot2)    
+library(rmarkdown)
+library(knitr)
+knitr::opts_chunk$set(tidy.opts = list(width.cutoff = 60, tidy = TRUE))
+library(kableExtra)       
+library(readr)      
+library(purrr)     
+library(broom)     
+library(MASS)       
+library(lme4)
+library(MuMIn)
+library(nlme)
+library(foreign)
+library(survival)
+library(car)
+library(lmtest)
+library(robust)
+library(stargazer)
+library(readxl)
+library(metafor)
+library(xtable)
+library(tinytex)
+library(texreg)
+library(tidyverse)
+library(dmetar)
+library(stargazer)
+library(meta)
+library(countrycode)
+library(gridExtra)
+library(weightr)
+library(metasens)
+library(vtable)
+library(stringr)
+library(parallel)
+library(MuMIn)
+```
+
+# Setup and summary information
+
+## General Set-up
+
+```{r warning=FALSE}
+setwd("/Users/arthurjohnson/Library/CloudStorage/OneDrive-UniversityofEdinburgh/Year 4/Dissertation/Meta-Analysis/Dissertation_Data_Analysis")
+FDII <- read_excel("FDI_Inequality_R_input.xlsx")
+FDII$control_variables_1 <- as.factor(FDII$control_variables_1)
+FDII$control_variables_2 <- as.factor(FDII$control_variables_2)
+FDII$control_variables_3 <- as.factor(FDII$control_variables_3)
+FDII$control_variables_4 <- as.factor(FDII$control_variables_4)
+FDII$control_variables_5 <- as.factor(FDII$control_variables_5)
+FDII$estimation_methods <- as.factor(FDII$estimation_methods)
+FDII$coefficient <- as.numeric(FDII$coefficient)
+FDII$journal_rank <- as.numeric(FDII$journal_rank)
+FDII$log_journal_rank <- log(FDII$journal_rank)
+FDII$se <- as.numeric(FDII$se)
+FDII$t_value <- as.numeric(FDII$t_value)
+FDII$t_value_calculated <- as.numeric(FDII$t_value_calculated)
+FDII$p_value <- as.numeric(FDII$p_value)
+```
+
+```{r}
+# This data is from the Maddison Project (2020)
+Income_Data <- read.csv("Country_Income_Data.csv")
+Income_Data$avg_GDPPC_pc <- log((Income_Data$Developed_Sum)/(Income_Data$Country_table_count*(Income_Data$sample_period_end-Income_Data$sample_period_start+1)))
+FDII$mean_log_GDPPC <- Income_Data$avg_GDPPC_pc
+Income_Data$log10_GDPPC_pc <- log10((Income_Data$Developed_Sum)/(Income_Data$Country_table_count*(Income_Data$sample_period_end-Income_Data$sample_period_start+1)))
+FDII$mean_log10_GDPPC <- Income_Data$log10_GDPPC_pc
+
+Income_Data[, 200:8648] <- apply(Income_Data[, 200:8648], 2, function(x) {
+  x <- as.numeric(x)
+  x[x == 0] <- NA
+  return(x)
+})
+
+Income_Data$median_GDPPC <- apply(Income_Data[, 200:8648], 1, median, na.rm = TRUE)
+Income_Data$median_log_GDPPC <- log(Income_Data$median_GDPPC)
+Income_Data$median_log10_GDPPC <- log10(Income_Data$median_GDPPC)
+FDII$median_log_GDPPC <- log(Income_Data$median_GDPPC)
+FDII$median_log10_GDPPC <- log10(Income_Data$median_GDPPC)
+
+```
+
+
+```{r}
+MP_df <- read.csv("MADDISON_PROJECT_DATA.csv")
+MP_df <- MP_df[!MP_df$unique_id %in% c("16005", "16006", "45013", "45014", "45015", "45016", "45017", "45018", "45019", "45020", "45021", "45022", "45023", "45024"), ]
+```
+
+```{r}
+MP_df <- MP_df[, -(4:195)]
+MP_df <- MP_df[, -(11:11434)]
+```
+
+```{r}
+FDII$MP_LI_count <- MP_df$LI_count
+FDII$MP_LMI_count <- MP_df$LMI_count
+FDII$MP_MHI_count <- MP_df$MHI_count
+FDII$MP_HI_count <- MP_df$HI_count
+FDII$MP_dev_avg <- MP_df$Developed_Average
+FDII$MP_dev_sum <- MP_df$Developed_Sum
+FDII$MP_incl_count <- MP_df$Developed_Count
+```
+
+```{r}
+# Plot thw two different averages
+ggplot(FDII, aes(x = developed_average, y = MP_dev_avg)) +
+  geom_point(size = 1, color = "lightblue3") +
+  geom_smooth(method = "lm", color = "deepskyblue4") +
+  labs(x = "Developed Average (World Bank)", 
+       y = "Developed Average (Maddison Project)") +
+  theme_minimal()
+```
+
+
+## Collective country count
+
+```{r warning=FALSE}
+collective_country_codes <- unlist(strsplit(as.character(FDII$country_code), ";\\s*"))
+collective_country_code_frequencies <- as.data.frame(table(collective_country_codes))
+names(collective_country_code_frequencies) <- c('ISO_code', 'frequency')
+collective_country_code_frequencies$ISO_code <- as.character(collective_country_code_frequencies$ISO_code)
+collective_country_code_frequencies$country_name <- countrycode(collective_country_code_frequencies$ISO_code, origin = 'iso3c', 'iso3c')
+collective_country_code_frequencies$ISO_code <- as.numeric(collective_country_code_frequencies$ISO_code)
+collective_country_code_frequencies$country_name <- countrycode(collective_country_code_frequencies$ISO_code, 'iso3n', 'country.name')
+ordered_collective_frequencies <- collective_country_code_frequencies[order(collective_country_code_frequencies$frequency, decreasing = TRUE), ]
+collective_count_output <- ordered_collective_frequencies[, c("country_name", "frequency")]
+sum(collective_count_output$frequency)
+```
+
+## Individual country count
+
+```{r warning=FALSE}
+single_country_studies <- FDII[FDII$level != 3, ]
+single_country_codes <- unlist(strsplit(as.character(single_country_studies$country_code), ";\\s*"))
+single_country_code_frequencies <- as.data.frame(table(single_country_codes))
+names(single_country_code_frequencies) <- c('ISO_code', 'frequency')
+single_country_code_frequencies$ISO_code <- as.character(single_country_code_frequencies$ISO_code)
+single_country_code_frequencies$country_name <- countrycode(single_country_code_frequencies$ISO_code, origin = 'iso3c', 'iso3c')
+single_country_code_frequencies$ISO_code <- as.numeric(single_country_code_frequencies$ISO_code)
+single_country_code_frequencies$country_name <- countrycode(single_country_code_frequencies$ISO_code, 'iso3n', 'country.name')
+ordered_single_frequencies <- single_country_code_frequencies[order(single_country_code_frequencies$frequency, decreasing = TRUE), ]
+single_count_output <- ordered_single_frequencies[, c('country_name', 'frequency')]
+sum(single_count_output$frequency)
+```
+
+## Multi-country count
+
+```{r warning=FALSE}
+multi_country_studies <- FDII[FDII$level == 3, ]
+multi_country_codes <- unlist(strsplit(as.character(multi_country_studies$country_code), ";\\s*"))
+multi_country_code_frequencies <- as.data.frame(table(multi_country_codes))
+names(multi_country_code_frequencies) <- c('ISO_code', 'frequency')
+multi_country_code_frequencies$ISO_code <- as.character(multi_country_code_frequencies$ISO_code)
+multi_country_code_frequencies$country_name <- countrycode(multi_country_code_frequencies$ISO_code, origin = 'iso3c', 'iso3c')
+multi_country_code_frequencies$ISO_code <- as.numeric(multi_country_code_frequencies$ISO_code)
+multi_country_code_frequencies$country_name <- countrycode(multi_country_code_frequencies$ISO_code, 'iso3n', 'country.name')
+ordered_multi_frequencies <- multi_country_code_frequencies[order(multi_country_code_frequencies$frequency, decreasing = TRUE), ]
+multi_count_output <- ordered_multi_frequencies[, c('country_name', 'frequency')]
+sum(multi_count_output$frequency)
+```
+
+## Find counts and other relevant data to for the summary table creation
+
+```{r}
+# Count of regression tests used:
+table(FDII$estimation_methods)
+```
+
+
+```{r}
+# Count of published papers:
+table(FDII$if_published)
+```
+
+
+```{r}
+# Count of FDI measure used:
+# Number 1 and 9 are the Gini coefficients
+table(FDII$FDI)
+```
+
+
+```{r}
+# Count of Inequality measure used:
+table(FDII$Inequality)
+```
+
+
+```{r}
+# Count of single and multi-country studies:
+table(FDII$level)
+```
+
+
+```{r}
+# Count of regression tests used given they were published:
+table(FDII$estimation_methods, FDII$if_published==1)
+```
+
+
+```{r}
+# Count of Inequality measure used given they were published:
+table(FDII$Inequality, FDII$if_published==1)
+```
+
+
+```{r}
+# Count of FDI measure used given they were published
+table(FDII$FDI, FDII$if_published==1)
+```
+
+```{r}
+#Replace all NAs with 'BLANK' in the control variables
+FDII$control_variables_1 <- as.character(FDII$control_variables_1)
+FDII$control_variables_1[is.na(FDII$control_variables_1)] <- "NO CONTROL"
+FDII$control_variables_2 <- as.character(FDII$control_variables_2)
+FDII$control_variables_2[is.na(FDII$control_variables_2)] <- "NO CONTROL"
+FDII$control_variables_3 <- as.character(FDII$control_variables_3)
+FDII$control_variables_3[is.na(FDII$control_variables_3)] <- "NO CONTROL"
+FDII$control_variables_4 <- as.character(FDII$control_variables_4)
+FDII$control_variables_4[is.na(FDII$control_variables_4)] <- "NO CONTROL"
+FDII$control_variables_5 <- as.character(FDII$control_variables_5)
+FDII$control_variables_5[is.na(FDII$control_variables_5)] <- "NO CONTROL"
+```
+
+
+
+```{r}
+# Info on control variable counts
+selected_columns <- FDII[, c("control_variables_1", "control_variables_2", "control_variables_3", "control_variables_4", "control_variables_5")]
+unlist <- tolower(unlist(selected_columns, use.names = FALSE))
+count_table <- table(unlist)
+count_df <- as.data.frame(count_table)
+names(count_df) <- c("Variable", "Included")
+count_df$notincl <- 616 - count_df$Included
+count_df[order(-count_df$Included), ]
+```
+
+## Average year visualisation
+
+```{r}
+FDII$avg_sample_year <- round((FDII$sample_period_start + (FDII$sample_period_end - FDII$sample_period_start)/2),0)
+
+ggplot(FDII, aes(x = avg_sample_year), width = 8, height = 6) +
+stat_ecdf(geom = "step", pad = FALSE) +
+labs(x = "Average Sample Year",
+  y = "Cumulative Density") +
+  theme_minimal() +
+  theme(plot.background = element_rect(fill = "transparent", color = NA),
+  panel.background = element_rect(fill = "white"),
+  panel.grid.minor = element_blank(),
+  panel.border = element_blank(),
+  axis.line = element_line(color = "black"))
+ggsave("average_sample_year_plot.png", bg = "transparent", width = 8, height = 6)
+```
+
+## t-statistic density by strength
+
+```{r}
+hist(FDII$t_value_calculated,
+  breaks = 30,
+  xlim = c(-9, 9),
+  ylim = c(0, 140),
+  xlab = "t-statistic",
+  col = "lightblue3",
+  border = "white",
+  main = "Histogram of t-statistics")
+axis(1, at = -10:10)
+abline(v = -1.68, col = "deepskyblue4", lwd = 1, lty = 1)
+text(x = -2.5, y = 140, '-1.68', col = "deepskyblue4")
+abline(v = 1.68, col = "deepskyblue4", lwd = 1, lty = 1)
+text(x = 2.3, y = 140, '1.68', col = "deepskyblue4")
+```
+
+# Further setup for MRA and initial tests
+
+## Set up Partial Correlation Coefficient
+
+```{r}
+FDII$PCC <- (FDII$t_value_calculated)/sqrt((FDII$t_value_calculated)^2+FDII$degree_freedom)
+FDII$PCC_se <- sqrt((1-(FDII$PCC)^2)/FDII$degree_freedom)
+mean(FDII$PCC)
+mean(FDII$PCC_se)
+```
+
+This is from Stanley and Doucouliagos (2012) - ENSURE citation!!
+
+
+## Calculate averages within and out of OECD countries
+```{r}
+# Number and proportion of studies that were conducted in only OECD countries (both individual and multi-country studies)
+print(paste("The number of studies that focused solely on OECD countries is", length(FDII$if_OECD[FDII$if_OECD==1]), "-- This includes individual-level studies"))
+print(paste("The number of studies that focused solely on non-OECD countries is", length(FDII$if_OECD[FDII$if_OECD==0]), "-- This includes individual-level studies"))
+print(paste("The proportion of studies that focused solely on OECD countries is", round(100*length(FDII$if_OECD[FDII$if_OECD==1])/(length(FDII$if_OECD[FDII$if_OECD==1]) + length(FDII$if_OECD[FDII$if_OECD==0])), 2),"%"))
+
+OECD_multi <- length(FDII$if_OECD[FDII$if_OECD == 1 & FDII$level == 3])
+print(paste("The number of multi-country studies that focused solely on OECD countries is", OECD_multi))
+
+nonOECD_multi <- length(FDII$if_OECD[FDII$if_OECD == 0 & FDII$level == 3])
+print(paste("The number of multi-country studies that focused solely on non-OECD countries is", nonOECD_multi))
+print(paste("The proportion of multi-country studies that focused solely on OECD countries is", round(100*OECD_multi/(OECD_multi + nonOECD_multi), 2),"%"))
+
+OECD_single <- length(FDII$if_OECD[FDII$if_OECD == 1 & FDII$level != 3])
+print(paste("The number of single-country studies that focused solely on OECD countries is", OECD_single))
+
+nonOECD_single <- length(FDII$if_OECD[FDII$if_OECD == 0 & FDII$level != 3])
+print(paste("The number of single-country studies that focused solely on non-OECD countries is", nonOECD_single))
+print(paste("The proportion of single-country studies that focused solely on OECD countries is", round(100*OECD_single/(OECD_single + nonOECD_single), 2),"%"))
+
+print(paste("The mean of the PCC of non-OECD focussed studies (single- and multi-country studies)", round(mean(FDII$PCC[FDII$if_OECD==0]),3)))
+print(paste("The standard error of the PCC of non-OECD focussed studies (single- and multi-country studies)", round(mean(FDII$PCC_se[FDII$if_OECD==0]),3)))
+
+print(paste("The mean of the PCC of OECD-focussed studies (single- and multi-country studies)", round(mean(FDII$PCC[FDII$if_OECD==1]),3)))
+print(paste("The standard error of the PCC of OECD-focussed studies (single- and multi-country studies)", round(mean(FDII$PCC_se[FDII$if_OECD==1]),3)))
+
+print(paste("The mean of the PCC of OECD-focussed studies (single-country studies)", round(mean(FDII$PCC[FDII$if_OECD == 1 & FDII$level != 3]),3)))
+print(paste("The standard error of the PCC of OECD-focussed studies (single-country studies)", round(mean(FDII$PCC_se[FDII$if_OECD == 1 & FDII$level != 3]),3)))
+
+print(paste("The mean of the PCC of non-OECD focussed studies (single-country studies)", round(mean(FDII$PCC[FDII$if_OECD == 0 & FDII$level != 3]),3)))
+print(paste("The standard error of the PCC of non-OECD focussed studies (single-country studies)", round(mean(FDII$PCC_se[FDII$if_OECD == 0 & FDII$level != 3]),3)))
+
+print(paste("The mean of the PCC of OECD-focussed studies (multi-country studies)", round(mean(FDII$PCC[FDII$if_OECD == 1 & FDII$level == 3]),3)))
+print(paste("The standard error of the PCC of OECD-focussed studies (multi-country studies)", round(mean(FDII$PCC_se[FDII$if_OECD == 1 & FDII$level == 3]),3)))
+
+print(paste("The mean of the PCC of non-OECD focussed studies (multi-country studies)", round(mean(FDII$PCC[FDII$if_OECD == 0 & FDII$level == 3]),3)))
+print(paste("The standard error of the PCC of non-OECD focussed studies (multi-country studies)", round(mean(FDII$PCC_se[FDII$if_OECD == 0 & FDII$level == 3]),3)))
+```
+
+## Initial plots
+```{r}
+ggplot(data = FDII, aes(x = MP_dev_avg, y = PCC)) +
+  geom_point(size = 1, color = "lightblue3") +
+  geom_smooth(method = "gam", formula = y ~ s(x, bs = "cs"), color = "deepskyblue4") +
+  labs(x = "Developed Average", 
+       y = "Partial Correlation Coefficient") +
+  theme_minimal()
+```
+
+```{r}
+WB_pub <- ggplot(data = FDII, aes(x = publication_time, y = developed_average)) +
+  geom_point(color = "lightblue3", size = 1) +
+  geom_smooth(method = "lm", color = "deepskyblue4") +
+  labs(x = "Publication Year", 
+       y = "Average Country Development\n(World Bank categorsation)") + 
+  theme_minimal()
+
+MP_pub <- ggplot(data = FDII, aes(x = publication_time, y = Income_Data$avg_GDPPC_pc)) +
+  geom_point(color = "lightblue3", size = 1) +
+  geom_smooth(method = "lm", color = "deepskyblue4") +
+  ylim(7, 11) +
+  labs(x = "Publication Year", 
+       y = "Ln GDP per Capita\n(Maddison Project data)")+
+  theme_minimal()
+
+grid.arrange(WB_pub, MP_pub, ncol = 2)
+```
+
+```{r}
+WB_pub <- ggplot(data = FDII, aes(x = publication_time, y = developed_average)) +
+  geom_point(color = "lightblue3", size = 1) +
+  geom_smooth(method = "lm", color = "deepskyblue4") +
+  labs(x = "Publication Year", 
+       y = "Average Country Development\n(World Bank categorsation)") + 
+  theme_minimal()
+
+MP_pub <- ggplot(data = FDII, aes(x = publication_time, y = MP_dev_avg)) +
+  geom_point(color = "lightblue3", size = 1) +
+  geom_smooth(method = "lm", color = "deepskyblue4") +
+  ylim(1, 4) +
+  labs(x = "Publication Year", 
+       y = "Average Country Development\n(Maddison Project data)")+
+  theme_minimal()
+
+grid.arrange(WB_pub, MP_pub, ncol = 2)
+```
+
+
+
+```{r}
+ggplot(data = data.frame(Income_Data$avg_GDPPC_pc, FDII$developed_average)) +
+  geom_point(aes(x = Income_Data$avg_GDPPC_pc, y = FDII$developed_average), color = "lightblue3", size = 1) +
+  geom_smooth(aes(x = Income_Data$avg_GDPPC_pc, y = FDII$developed_average), method = "lm", color = "deepskyblue4", se = FALSE) +
+  labs(x = "Average GDP per Capita\n(Maddison Project data)", 
+       y = "Developed Average\n(World Bank categorisation)") +
+  theme_minimal()
+```
+
+
+
+```{r}
+ggplot(data = Income_Data, aes(x = avg_GDPPC_pc, y = FDII$PCC)) +
+  geom_point(size = 1, color = "lightblue3") +
+  geom_smooth(method = "loess", color = "deepskyblue4") +
+  labs(x = "Log GDP per Capita", 
+       y = "Partial Correlation Coefficient") + 
+  theme_minimal()
+```
+
+```{r}
+ggplot(data = FDII, aes(x = publication_time, y = Income_Data$avg_GDPPC_pc)) +
+  geom_point(color = "lightblue3", size = 1) +
+  geom_smooth(method = "lm", color = "deepskyblue4") +
+  ylim(7, 11) +
+  labs(x = "Publication Year", 
+       y = "Ln GDP per Capita")+
+  theme_minimal()
+```
+
+
+
+
+```{r}
+maddison_df <- read.csv("Maddison_Data.csv")
+```
+
+
+
+```{r}
+maddison_df$LogGDPpc <- log(maddison_df$GDP.per.capita)
+maddison_df_recent <- maddison_df[maddison_df$Year > 1950,]
+
+unique_codes <- unique(maddison_df_recent$Code)
+grey_blue_colors <- colorRampPalette(c("lightgrey", "lightblue3"))(length(unique_codes))
+color_mapping <- setNames(grey_blue_colors, unique_codes)
+
+ggplot(data = maddison_df_recent, aes(x = Year, y = LogGDPpc, color = Code)) +
+  geom_point(size = 1) +
+  geom_smooth(method = "gam", se = FALSE, color = "deepskyblue4") +
+  labs(x = "Year", 
+       y = "Ln GDP per Capita") +
+  scale_color_manual(values = color_mapping, breaks = NULL) +
+  theme_minimal() +
+  geom_text(data = subset(maddison_df_recent, Code == "QAT" & Year == 2009), 
+            aes(label = "Qatar"), 
+            vjust = -0.5, 
+            hjust = 1,
+            color = "black",
+            size = 3) +
+  geom_text(data = subset(maddison_df_recent, Code == "KWT" & Year == 1956), 
+            aes(label = "Kuwait"), 
+            vjust = -1,
+            color = "black",
+            size = 3) +
+  geom_text(data = subset(maddison_df_recent, Code == "COD" & Year == 2004), 
+            aes(label = "DRC"), 
+            vjust = 1.5, 
+            hjust = -0.25,
+            color = "black",
+            size = 3) +
+  geom_point(data = subset(maddison_df_recent, (Code == "QAT" & Year == 2009) | 
+                            (Code == "KWT" & Year == 1956) | 
+                            (Code == "COD" & Year == 2004)), 
+             aes(color = "black"), 
+             size = 1)
+
+```
+
+
+```{r}
+ggplot(data = FDII, aes(x = publication_time, y = developed_average)) +
+  geom_point(size = 1, color = "lightblue3") +
+  geom_smooth(method = "lm", color = "deepskyblue4") + 
+  labs(x = "Publication Year", 
+       y = "Average Country Development\n(per the World Bank's classifications") +
+  theme_minimal()
+```
+
+```{r}
+ggplot(data = FDII, aes(x = publication_time-sample_period_end, y = abs(PCC)-PCC_se)) +
+  geom_point(size = 1, color = "lightblue3") +
+  geom_smooth(method = "lm", color = "deepskyblue4") + 
+  labs(x = "Years between the study end date publication date", 
+       y = expression(paste("|", r[i],"|", - SE[r[i]]))) +
+  theme_minimal()
+```
+
+## Setup for meta regression analysis by drawing out control variables into binary data
+```{r}
+# Step 1: Pivot longer
+FDII_long <- FDII %>%
+  pivot_longer(cols = starts_with("control_variables_"),
+               names_to = "Control_Variable_Type",
+               values_to = "Control_Variable_Name") %>%
+  filter(!is.na(Control_Variable_Name) & Control_Variable_Name != "")
+
+# Step 2: Pivot wider and create indicator variables
+FDII_wide <- FDII_long %>%
+  mutate(Presence = 1) %>%
+  pivot_wider(names_from = Control_Variable_Name, values_from = Presence, values_fill = list(Presence = 0))
+
+# Step 3: Group by and summarise only numeric columns
+FDII_merged <- FDII_wide %>%
+  group_by(citation, coefficient, t_value_calculated, study_country, journal_name, estimation_methods, journal_rank) %>%
+  summarise(across(where(is.numeric), ~if(all(is.na(.))) 0 else max(., na.rm = TRUE)), .groups = 'drop')
+
+# Left join to put the control variables back into FDII
+FDII <- left_join(FDII, FDII_merged, by = c("citation", "coefficient", "t_value_calculated", "study_country", "journal_name", "estimation_methods", "journal_rank"))
+
+# Remove duplicate columns
+FDII <- FDII %>% dplyr::select(-matches("\\.y$"))
+FDII <- FDII %>% dplyr::rename_with(~str_replace(., "\\.x$", ""), .cols = ends_with(".x"))
+
+FDII$GDPpc_2 <- FDII$`GDPpc^2`
+```
+
+## Filters for meta analyses
+```{r}
+# Measures of FDI and Inequality
+FDII$stock <- ifelse(FDII$FDI %in% c(1, 3, 9), 1, 0)
+FDII$GINI_control <- ifelse(FDII$Inequality == 1, 1, 0)
+FDII$W_I_Disp <- ifelse(FDII$Inequality %in% c(4, 7, 8, 11, 12, 13, 14, 16, 17, 18), 1, 0)
+FDII$I_Share <- ifelse(FDII$Inequality %in% c(2, 5, 6), 1, 0)
+FDII$Other_I_measure <- ifelse(FDII$Inequality %in% c(3, 9, 10, 15), 1, 0)
+
+# Measures of controlling for endogeneity
+FDII$est_method <- ifelse(FDII$estimation_methods %in% c('GMM', 'IV', '2SLS'), 1, 0)
+# Single Country
+FDII$single_country <- ifelse(FDII$level %in% c(1, 2), 1, 0)
+# Control(s)
+FDII$GDP_control <- ifelse(FDII$control_variables_1 %in% c('GDPpc', 'GDP', 'GDPpc^2','GDP^2') | FDII$control_variables_2 %in% c('GDPpc', 'GDP', 'GDPpc^2','GDP^2') | FDII$control_variables_3 %in% c('GDPpc', 'GDP', 'GDPpc^2','GDP^2') | FDII$control_variables_4 %in% c('GDPpc', 'GDP', 'GDPpc^2','GDP^2') | FDII$control_variables_5 %in% c('GDPpc', 'GDP', 'GDPpc^2','GDP^2'), 1, 0)
+FDII$GDP_control <- ifelse(!is.na(FDII$GDP_control), FDII$GDP_control, 0)
+
+FDII$education_control <- ifelse(FDII$control_variables_1 %in% c('education_secondary_school_enrollment', 'education_middle_school_enrollment') | FDII$control_variables_2 %in% c('education_secondary_school_enrollment', 'education_middle_school_enrollment') | FDII$control_variables_3 %in% c('education_secondary_school_enrollment', 'education_middle_school_enrollment') | FDII$control_variables_4 %in% c('education_secondary_school_enrollment', 'education_middle_school_enrollment') | FDII$control_variables_5 %in% c('education_secondary_school_enrollment', 'education_middle_school_enrollment'), 1, 0)
+FDII$education_control <- ifelse(!is.na(FDII$education_control), FDII$education_control, 0)
+
+FDII$trade_control <- ifelse(FDII$control_variables_1 == 'trade' | FDII$control_variables_2 == 'trade' | FDII$control_variables_3 == 'trade' | FDII$control_variables_4 == 'trade' | FDII$control_variables_5 == 'trade', 1, 0)
+FDII$trade_control <- ifelse(!is.na(FDII$trade_control), FDII$trade_control, 0)
+
+FDII$inflation_control <- ifelse(FDII$control_variables_1 == 'inflation' | FDII$control_variables_2 == 'inflation' | FDII$control_variables_3 == 'inflation' | FDII$control_variables_4 == 'inflation' | FDII$control_variables_5 == 'inflation', 1, 0)
+FDII$inflation_control <- ifelse(!is.na(FDII$inflation_control), FDII$inflation_control, 0)
+
+FDII$population_control <- ifelse(FDII$control_variables_1 %in% c('pop') | FDII$control_variables_2 %in% c('pop') | FDII$control_variables_3 %in% c('pop') | FDII$control_variables_4 %in% c('pop') | FDII$control_variables_5 %in% c('pop'), 1, 0)
+FDII$population_control <- ifelse(!is.na(FDII$population_control), FDII$population_control, 0)
+
+FDII$gov_inequality_effort_control <- ifelse(FDII$control_variables_1 %in% c('gov_exp', 'qov_quality') | FDII$control_variables_2 %in% c('gov_exp', 'qov_quality') | FDII$control_variables_3 %in% c('gov_exp', 'qov_quality') | FDII$control_variables_4 %in% c('gov_exp', 'qov_quality') | FDII$control_variables_5 %in% c('gov_exp', 'qov_quality'), 1, 0)
+FDII$gov_inequality_effort_control <- ifelse(!is.na(FDII$gov_inequality_effort_control), FDII$gov_inequality_effort_control, 0)
+
+FDII$unemployment_control <- ifelse(FDII$control_variables_1 == 'unemployment' | FDII$control_variables_2 == 'unemployment' | FDII$control_variables_3 == 'unemployment' | FDII$control_variables_4 == 'unemployment' | FDII$control_variables_5 == 'unemployment', 1, 0)
+FDII$unemployment_control <- ifelse(!is.na(FDII$unemployment_control), FDII$unemployment_control, 0)
+
+save(FDII, file = "FDI_Inequality_R.rda")
+```
+
+## Split data into income buckets
+```{r}
+FDII_higher <- FDII[FDII$developed_average > 3,]
+FDII_middle <- FDII[FDII$developed_average > 2 & FDII$developed_average <= 3,]
+FDII_lower <- FDII[FDII$developed_average <= 2,]
+```
+
+# ```{r}
+# FDII_higher <- FDII[FDII$MP_dev_avg > 3,]
+# FDII_middle <- FDII[FDII$MP_dev_avg > 2 & FDII$MP_dev_avg <= 3,]
+# FDII_lower <- FDII[FDII$MP_dev_avg <= 2,]
+# ```
+
+
+## Means for the different income levels
+```{r}
+mean(FDII_higher$PCC)
+mean(FDII_higher$PCC_se)
+
+mean(FDII_middle$PCC)
+mean(FDII_middle$PCC_se)
+
+mean(FDII_lower$PCC)
+mean(FDII_lower$PCC_se)
+```
+
+## Meta generation setup
+
+```{r}
+# Meta generation set-up
+m.gen <- metagen(TE = FDII$PCC,
+                 seTE = FDII$PCC_se,
+                 studlab = FDII$citation,
+                 data = FDII,
+                 sm = "SMD",
+                 comb.fixed = FALSE,
+                 comb.random = TRUE,
+                 method.tau = "ML",
+                 weighted = TRUE,
+                 hakn = TRUE,
+                 test = "knha",
+                 title = "FDI Impacts on Income Inequality")
+m.gen
+```
+## Meta generation for different income levels
+
+```{r}
+m.higher <- metagen(TE = FDII_higher$PCC,
+                 seTE = FDII_higher$PCC_se,
+                 studlab = FDII_higher$citation,
+                 data = FDII_higher,
+                 sm = "SMD",
+                 comb.fixed = FALSE,
+                 comb.random = TRUE,
+                 method.tau = "ML",
+                 weighted = TRUE,
+                 hakn = TRUE,
+                 test = "knha",
+                 title = "FDI Impacts on Income Inequality (Higher Income)")
+m.higher
+
+m.middle <- metagen(TE = FDII_middle$PCC,
+                 seTE = FDII_middle$PCC_se,
+                 studlab = FDII_middle$citation,
+                 data = FDII_middle,
+                 sm = "SMD",
+                 comb.fixed = FALSE,
+                 comb.random = TRUE,
+                 method.tau = "ML",
+                 weighted = TRUE,
+                 hakn = TRUE,
+                 test = "knha",
+                 title = "FDI Impacts on Income Inequality (Middle Income)")
+m.middle
+
+m.lower <- metagen(TE = FDII_lower$PCC,
+                 seTE = FDII_lower$PCC_se,
+                 studlab = FDII_lower$citation,
+                 data = FDII_lower,
+                 sm = "SMD",
+                 comb.fixed = FALSE,
+                 comb.random = TRUE,
+                 method.tau = "ML",
+                 weighted = TRUE,
+                 hakn = TRUE,
+                 test = "knha",
+                 title = "FDI Impacts on Income Inequality (Lower Income)")
+m.lower
+```
+## p-value test
+
+```{r}
+pcurve(m.gen)
+```
+
+
+Talk about how this protects against not just publication bias, but also against p-hacking.
+
+This p-curve test plots statistically-significant (p < 0.05) values and assesses whether there is 'evidential' value in the underlying impact of FDI on income inequality. C.47% of results being statistically significant. The flatness test (the graph) and the right-skewness test suggest that our data is not flat, but is skewed to the right -- this is what we expect to witness if there is a true underlying effect. There is a 77% chance of detecting that true underlying effect should it exist.
+
+Other studies need to be considered (heterogeneity, study quality, etc.), but this indicates that there is an effect.
+
+
+```{r}
+pcurve(m.higher)
+pcurve(m.middle)
+pcurve(m.lower)
+```
+
+
+```{r}
+mgen.test <- metareg(m.gen, ~publication_time)
+bubble(mgen.test, studlab = FALSE)
+```
+
+```{r}
+FDII[c("if_published", "publication_time", "PCC", "developed_average")] %>% cor()
+FDII_higher[c("if_published", "publication_time", "PCC", "developed_average")] %>% cor()
+FDII_middle[c("if_published", "publication_time", "PCC", "developed_average")] %>% cor()
+FDII_lower[c("if_published", "publication_time", "PCC", "developed_average")] %>% cor()
+```
+
+```{r}
+```
+
+
+
+
+## PET-PEESE tests
+
+```{r}
+data.petpeese <- data.frame(TE = m.gen$TE, seTE = m.gen$seTE, varTE = m.gen$seTE^2)
+data.petpeese$w_k <- 1/(data.petpeese$varTE)
+
+pet <- lm(TE ~ seTE, weights = w_k, data = data.petpeese)
+pet_summary <- summary(pet)$coefficients
+print(round(pet_summary, 3))
+
+peese <- lm(TE ~ varTE, weights = w_k, data = data.petpeese)
+peese_summary <- summary(peese)$coefficients
+print(round(peese_summary, 3))
+
+### m.gen.inf <- InfluenceAnalysis(m.gen, random = TRUE) # This takes a long time to run!
+### plot(m.gen.inf, "baujat")
+```
+
+Only run the noted aspects when necessary as the influence analysis takes forever to run!
+
+## Inputs to run meta regression
+
+```{r warning=FALSE, echo=TRUE, message=FALSE}
+# Set it such that the control variables are put into one column
+FDII_long <- FDII %>%
+  pivot_longer(cols = starts_with("control_variables_"),
+               names_to = "Control_Variable_Type",
+               values_to = "Control_Variable_Name",
+               names_repair = "unique") %>%
+  filter(!is.na(Control_Variable_Name) & Control_Variable_Name != "")
+
+# Turn that one column into a grid of binary variables 
+FDII_wide <- FDII_long %>%
+  mutate(Presence = 1) %>%
+  pivot_wider(names_from = Control_Variable_Name, values_from = Presence, values_fill = list(Presence = 0), names_repair = "unique")
+
+# Flatten to remove duplicate rows and merge the binary variables
+FDII_merged <- FDII_wide %>%
+  group_by(citation, coefficient, t_value_calculated, study_country, journal_name, estimation_methods) %>%
+  summarise(across(where(is.numeric), ~if(all(is.na(.))) 0 else max(., na.rm = TRUE)), .groups = 'drop')
+
+# Perform a left join to integrate the new columns from FDII_merged back into FDII
+FDII <- left_join(FDII, FDII_merged, by = c("citation", "coefficient", "t_value_calculated", "study_country", "journal_name", "estimation_methods", "journal_rank"))
+FDII <- FDII %>% dplyr::select(-matches("\\.y$"))
+FDII <- FDII %>% dplyr::rename_with(~str_replace(., "\\.x$", ""), .cols = ends_with(".x"))
+```
+
+
+## Funnel plot for meta analysis (FAT)
+
+```{r}
+funnel_data <- metafor::funnel(m.gen,
+                      title = "FDI Impacts on Income Inequality",
+                      xlim = c(-1, 1),
+                      ylim = rev(c(45, 0)),
+                      studlab = FALSE,
+                      xlab = "Partial Correlation Coefficient (PCC)",
+                      ylab = "Precision (1/SE)",
+                      yaxis = "invse",
+                      col = "lightblue3",
+                      bg = "lightblue3",
+                      cex = 0.6)
+```
+
+
+```{r}
+eggers.test(m.gen)
+```
+The presence of funnel plot asymmetry could suggest that we have a publication bias. It could also be indicative of (Page et al., 2020):
+
+- Between-study heterogeneity - the plot assumes effect sizes are the result of the studies' sampling error, but it could be different true sizes
+- Different study methods, leading to greater effects
+- Lower-quality studies could show greater effect sizes as a result of greater bias risk
+- Could occur by chance (unlikely)
+
+
+
+```{r}
+ggplot(data = FDII, aes(x = PCC, y = 1/PCC_se)) +
+  geom_point(color = "lightblue3", size = 1) +
+  geom_vline(aes(xintercept = mean(FDII$PCC_se)), linetype = "dashed", color = "deepskyblue4") +
+  ylim(0, 45) +
+  labs(x = "Partial Correlation Coefficient", 
+       y = "Precision (1/SE)") +
+  theme_minimal() +
+  theme(panel.grid.minor.y = element_blank(),
+        panel.grid.minor.x = element_blank(),
+        panel.grid.major.x = element_blank())
+```
+
+# FAT-PET test
+```{r}
+res <- rma(FDII$PCC, sei = FDII$PCC_se)
+#FATPET test
+regtest(res, model = "rma", ret.fit = TRUE)
+
+```
+
+# FAT-PET test -- Higher income
+```{r}
+res_higher <- rma(FDII_higher$PCC, sei = FDII_higher$PCC_se)
+#FATPET test
+regtest(res_higher, model = "rma", ret.fit = TRUE)
+```
+
+# FAT-PET test -- Middle income
+```{r}
+res_middle <- rma(FDII_middle$PCC, sei = FDII_middle$PCC_se)
+#FATPET test
+regtest(res_middle, model = "rma", ret.fit = TRUE)
+```
+
+
+# FAT-PET test -- Lower income
+```{r}
+res_lower <- rma(FDII_lower$PCC, sei = FDII_lower$PCC_se)
+#FATPET test
+regtest(res_lower, model = "rma", ret.fit = TRUE)
+```
+
+
+# Meta Regression Analyses (MRAs)
+
+
+## Basic meta analysis test with no moderators
+
+```{r}
+meta.anal <- rma(yi = PCC,
+                 sei = PCC_se,
+                 data = FDII,
+                 method = "REML",
+                 mods = ~ PCC_se,
+                 test = "knha")
+meta.anal
+```
+
+\blandscape
+
+```{r}
+meta.anal.full.model <- rma(yi = PCC,
+                            sei = PCC_se,
+                            data = FDII,
+                            method = "REML",
+                            mods = ~ stock + GINI_control + I_Share + W_I_Disp + mean_log_GDPPC + est_method + GDP_control + education_control + single_country + trade_control + population_control + inflation_control + unemployment_control + gov_inequality_effort_control + if_published + PCC_se,
+                            test = "knha",
+                            digits = 3)
+
+meta.anal.full.model
+```
+
+```{r}
+meta.anal.select.model <- rma(yi = PCC,
+                            sei = PCC_se,
+                            data = FDII,
+                            method = "REML",
+                            mods = ~ GINI_control + I_Share + W_I_Disp + mean_log_GDPPC + single_country + if_published + PCC_se,
+                            test = "knha",
+                            digits = 3)
+
+meta.anal.select.model
+```
+
+```{r}
+meta.anal.select.model.median <- rma(yi = PCC,
+                            sei = PCC_se,
+                            data = FDII,
+                            method = "REML",
+                            mods = ~ GINI_control + I_Share + W_I_Disp + median_log_GDPPC + single_country + if_published + PCC_se,
+                            test = "knha",
+                            digits = 3)
+
+meta.anal.select.model.median
+```
+
+
+## Meta tests -- Explanatory Power of Moderating Variables
+### Drop the publication bias controls
+
+```{r}
+meta.anal.select.model.nopub <- rma(yi = PCC,
+                            sei = PCC_se,
+                            data = FDII,
+                            method = "REML",
+                            mods = ~ GINI_control + I_Share + W_I_Disp + median_log_GDPPC + single_country,
+                            test = "knha",
+                            digits = 3)
+
+meta.anal.select.model.nopub
+```
+
+### Drop the controls for endogeneity
+
+```{r}
+meta.anal.full.model.noend <- rma(yi = PCC,
+                            sei = PCC_se,
+                            data = FDII,
+                            method = "REML",
+                            mods = ~ GINI_control + I_Share + W_I_Disp + median_log_GDPPC,
+                            test = "knha",
+                            digits = 3)
+
+meta.anal.full.model.noend
+```
+
+### Drop the inequality measures controls
+
+```{r}
+meta.anal.full.model.noin <- rma(yi = PCC,
+                            sei = PCC_se,
+                            data = FDII,
+                            method = "REML",
+                            mods = ~ median_log_GDPPC,
+                            test = "knha",
+                            digits = 3)
+
+meta.anal.full.model.noin
+```
+
+
+## Meta tests -- Higher income
+
+```{r}
+meta.anal.higher <- rma(yi = PCC,
+                 sei = PCC_se,
+                 data = FDII_higher,
+                 method = "REML",
+                 mods = ~ PCC_se,
+                 test = "knha",
+                 digits = 3)
+meta.anal.higher
+```
+
+```{r}
+meta.anal.full.model.higher <- rma(yi = PCC,
+                            sei = PCC_se,
+                            data = FDII_higher,
+                            method = "REML",
+                            mods = ~ stock + GINI_control + I_Share + W_I_Disp + est_method + GDP_control + education_control + single_country + trade_control + population_control + inflation_control + unemployment_control + gov_inequality_effort_control + if_published + PCC_se,
+                            test = "knha",
+                            digits = 3)
+
+meta.anal.full.model.higher
+```
+
+```{r}
+meta.anal.select.model.higher <- rma(yi = PCC,
+                            sei = PCC_se,
+                            data = FDII_higher,
+                            method = "REML",
+                            mods = ~ stock + W_I_Disp + GDP_control + education_control + trade_control + population_control + inflation_control + unemployment_control + gov_inequality_effort_control + if_published,
+                            test = "knha",
+                            digits = 3)
+
+meta.anal.select.model.higher
+```
+
+```{r}
+meta.anal.select.model.higher <- rma(yi = PCC,
+                            sei = PCC_se,
+                            data = FDII_higher,
+                            method = "REML",
+                            mods = ~ stock + W_I_Disp + GDP_control + education_control + trade_control + population_control + inflation_control + unemployment_control + gov_inequality_effort_control + if_published,
+                            test = "knha",
+                            digits = 3)
+
+meta.anal.select.model.higher
+```
+
+## Meta tests -- Middle income
+
+```{r}
+meta.anal.full.model.middle <- rma(yi = PCC,
+                            sei = PCC_se,
+                            data = FDII_middle,
+                            method = "REML",
+                            mods = ~ stock + GINI_control + I_Share + W_I_Disp + est_method + GDP_control + education_control + single_country + trade_control + population_control + inflation_control + unemployment_control + gov_inequality_effort_control + if_published + PCC_se,
+                            test = "knha",
+                            digits = 3)
+
+meta.anal.full.model.middle
+```
+
+```{r}
+meta.anal.select.model.middle <- rma(yi = PCC,
+                            sei = PCC_se,
+                            data = FDII_middle,
+                            method = "REML",
+                            mods = ~ stock + I_Share + est_method + GDP_control + education_control + single_country + if_published + PCC_se,
+                            test = "knha",
+                            digits = 3)
+
+meta.anal.select.model.middle
+```
+
+### Test for middle income
+
+```{r}
+meta.anal.test.model.middle <- rma(yi = PCC,
+                            sei = PCC_se,
+                            data = FDII_middle,
+                            method = "REML",
+                            mods = ~ est_method + GDP_control + education_control + gov_inequality_effort_control,
+                            test = "knha",
+                            digits = 3)
+
+meta.anal.test.model.middle
+```
+
+
+## Meta tests -- Lower income
+```{r}
+meta.anal.full.model.lower <- rma(yi = PCC,
+                            sei = PCC_se,
+                            data = FDII_lower,
+                            method = "REML",
+                            mods = ~ stock + GINI_control + I_Share + W_I_Disp + est_method + GDP_control + education_control + single_country + trade_control + population_control + inflation_control + unemployment_control + gov_inequality_effort_control + if_published + PCC_se,
+                            test = "knha",
+                            digits = 3)
+
+meta.anal.full.model.lower
+```
+
+```{r}
+meta.anal.select.model.lower <- rma(yi = PCC,
+                            sei = PCC_se,
+                            data = FDII_lower,
+                            method = "REML",
+                            mods = ~ GDP_control + single_country + population_control + inflation_control + unemployment_control + PCC_se,
+                            test = "knha",
+                            digits = 3)
+
+meta.anal.select.model.lower
+```
+
+### Test
+```{r}
+meta.anal.test.model.lower <- rma(yi = PCC,
+                            sei = PCC_se,
+                            data = FDII_lower,
+                            method = "REML",
+                            mods = ~ GDP_control + single_country + population_control + inflation_control + unemployment_control,
+                            test = "knha",
+                            digits = 3)
+
+meta.anal.test.model.lower
+```
+
+
+## Meta analysis test based on journal rank
+
+```{r}
+meta.anal.journ <- rma(yi = PCC,
+                 sei = PCC_se,
+                 data = FDII,
+                 method = "REML",
+                 mods = ~ journal_rank,
+                 test = "knha")
+meta.anal.journ
+```
+
+## Meta analysis test based on log journal rank
+
+```{r}
+meta.anal.lnjourn <- rma(yi = PCC,
+                       sei = PCC_se,
+                       data = FDII,
+                       method = "ML",
+                       mods = ~ log_journal_rank,
+                       test = "knha")
+meta.anal.lnjourn
+```
+
+## Meta analysis test without control variables
+
+```{r}
+options(width = 200)
+
+meta.anal.woCV <- rma(yi = PCC,
+                      sei = PCC_se,
+                      data = FDII,
+                      method = "ML",
+                      mods = ~ `study_country` + `estimation_methods` + `level` + `publication_time` + `avg_sample_year` + `data_type`,
+                      test = "t")
+meta.anal.woCV
+```
+
+## Meta analysis test with control variables only
+
+```{r}
+FDII$FDI_exports <- FDII$`FDI*exports`
+
+meta.anal.cont <- rma(yi = PCC,
+                      sei = PCC_se,
+                      data = FDII,
+                      method = "ML",
+                      mods = ~ `GDP` + `GDPpc` + `trade` + `exports` + `openness` + `GNI` + `export_incentives` + `GDPgr` + `education_secondary_school_enrollment` + `gov_quality` + `inflation` + `unemployment` + `GDPpc^2` + `export_growth` + `gov_exp` + `education_middle_school_enrollment` + `popgr` + `financial_development` + `labor_productivity` + `Country_size` + `import` + `GDP^2` + `FDI_exports` + `relative_productivity`,
+                      test = "t")
+meta.anal.cont
+```
+
+## Meta analysis all
+
+```{r}
+meta.anal.adv <- rma(yi = PCC,
+                     sei = PCC_se,
+                     data = FDII,
+                     method = "ML",
+                     mods = ~ `GDP` + `GDPpc` + `trade` + `exports` + `openness` + `GNI` + `export_incentives` + `GDPgr` + `education_secondary_school_enrollment` + `gov_quality` + `inflation` + `unemployment` + `GDPpc^2` + `export_growth` + `gov_exp` + `education_middle_school_enrollment` + `popgr` + `financial_development` + `labor_productivity` + `Country_size` + `import` + `GDP^2` + `FDI_exports` + `relative_productivity` + study_country + estimation_methods + study_country + estimation_methods + level + publication_time + avg_sample_year + data_type,
+                     test = "t")
+meta.anal.adv
+```
+
+## ANOVA test for best model (to test against overfitting)
+
+```{r}
+# meta.permutation <- permutest(meta.anal.adv)     # This takes c.40 minutes to run. It does not need to be run each time
+
+anova(meta.anal.cont, meta.anal.adv)
+```
+
+\elandscape
+
+# Further funnel plot asymmetry tests
+
+## Run the Eggers test for those with endogeneity controls
+
+The tests used that allow for endogeneity controls are:
+- 2SLS \\
+- 3SLS \\
+- IV \\
+- ARDL \\
+- LIML \\ 
+- LSDV \\
+- FM-OLS \\
+- CCE \\
+- DOLS \\
+- ECM \\
+- GMM \\
+
+```{r}
+options(width = 70)
+
+FDII_endo <- FDII %>%
+  filter(estimation_methods %in% c("2SLS", "3SLS", "IV", "Johansen's cointegration test", "ARDL", "LIML", "LSDV", "FM-OLS", "CCE", "DOLS", "ECM", "GMM"))
+m.gen.endo <- metagen(TE = FDII_endo$PCC,
+                      seTE = FDII_endo$PCC_se,
+                      studlab = FDII_endo$citation,
+                      data = FDII_endo,
+                      sm = "SMD",
+                      comb.fixed = FALSE,
+                      comb.random = TRUE,
+                      method.tau = "REML",
+                      hakn = TRUE,
+                      title = "FDI Impacts on Income Inequality (with endogeneity adjustments)")
+
+eggers.test(m.gen.endo)
+
+PCC_Funnel_Graph_endo <- metafor::funnel(m.gen.endo,
+                                    xlim = c(-1, 1),
+                                    ylim = rev(c(45, 0)),
+                                    studlab = FALSE,
+                                    xlab = "Partial Correlation Coefficient (PCC)",
+                                    ylab = "Precision (1/SE)",
+                                    yaxis = "invse",
+                                    col = "deepskyblue4",
+                                    bg = "deepskyblue4",
+                                    cex = 0.8)
+```
+We see that when we run a funnel plot asymmetry test on only those which have accounted for endogeneity issues, we still witness funnel ploy asymmetry.
+
+## Run the Eggers test for those without endogeneity controls
+
+```{r}
+FDII_no_test <- FDII %>%
+  filter(estimation_methods %in% c("Between effects", "GLS", "SUR", "SURE", "Random effect", "Probit", "Parks", "Panel", "OLS"))
+m.gen.no.test <- metagen(TE = FDII_no_test$PCC,
+                         seTE = FDII_no_test$PCC_se,
+                         studlab = FDII_no_test$citation,
+                         data = FDII_no_test,
+                         sm = "SMD",
+                         comb.fixed = FALSE,
+                         comb.random = TRUE,
+                         method.tau = "REML",
+                         hakn = TRUE,
+                         title = "FDI Impacts on Income Inequality (without endogeneity adjustments)")
+
+eggers.test(m.gen.no.test)
+
+PCC_Funnel_Graph_no_test <- metafor::funnel(m.gen.no.test,
+                                    xlim = c(-1, 1),
+                                    ylim = rev(c(45, 0)),
+                                    studlab = FALSE,
+                                    xlab = "Partial Correlation Coefficient (PCC)",
+                                    ylab = "Precision (1/SE)",
+                                    yaxis = "invse",
+                                    col = "deepskyblue4",
+                                    bg = "deepskyblue4",
+                                    cex = 0.8,
+                                    title = "FDI Impacts on Income Inequality (without endogeneity adjustments)")
+```
+As expected, we again witness funnel plot asymmetry on those who have not accounted for endogeneity
+
+## FAT - single-country
+
+```{r}
+FDII_single <- subset(FDII, level == 1)
+
+m.gen.single <- metagen(TE = FDII_single$PCC,
+                        seTE = FDII_single$PCC_se,
+                        studlab = FDII_single$citation,
+                        data = FDII_single,
+                        sm = "SMD",
+                        comb.fixed = FALSE,
+                        comb.random = TRUE,
+                        method.tau = "REML",
+                        hakn = TRUE,
+                        title = "FDI Impacts on Income Inequality (single country)")
+
+eggers.test(m.gen.single)
+
+PCC_Funnel_Graph_single <- metafor::funnel(m.gen.single,
+                                    xlim = c(-1, 1),
+                                    ylim = rev(c(45, 0)),
+                                    studlab = FALSE,
+                                    xlab = "Partial Correlation Coefficient (PCC)",
+                                    ylab = "Precision (1/SE)",
+                                    yaxis = "invse",
+                                    col = "deepskyblue4",
+                                    bg = "deepskyblue4",
+                                    cex = 0.8)
+```
+
+
+## FAT - multiple-country
+
+```{r}
+FDII_multi <- subset(FDII, level != 1)
+
+m.gen.multi <- metagen(TE = FDII_multi$PCC,
+                       seTE = FDII_multi$PCC_se,
+                       studlab = FDII_multi$citation,
+                       data = FDII_multi,
+                       sm = "SMD",
+                       comb.fixed = FALSE,
+                       comb.random = TRUE,
+                       method.tau = "REML",
+                       hakn = TRUE,
+                       title = "FDI Impacts on Income Inequality (multi country)")
+
+eggers.test(m.gen.multi)
+
+PCC_Funnel_Graph_multi <- metafor::funnel(m.gen.multi,
+                                           xlim = c(-1, 1),
+                                           ylim = rev(c(45, 0)),
+                                           studlab = FALSE,
+                                           xlab = "Partial Correlation Coefficient (PCC)",
+                                           ylab = "Precision (1/SE)",
+                                           yaxis = "invse",
+                                           col = "deepskyblue4",
+                                           bg = "deepskyblue4",
+                                           cex = 0.8)
+```
+
+
+## FAT - published papers
+
+```{r}
+FDII_published <- subset(FDII, if_published == 1)
+
+m.gen.published <- metagen(TE = FDII_published$PCC,
+                        seTE = FDII_published$PCC_se,
+                        studlab = FDII_published$citation,
+                        data = FDII_published,
+                        sm = "SMD",
+                        comb.fixed = FALSE,
+                        comb.random = TRUE,
+                        method.tau = "REML",
+                        hakn = TRUE,
+                        title = "FDI Impacts on Income Inequality (single country)")
+
+eggers.test(m.gen.published)
+
+PCC_Funnel_Graph_published <- metafor::funnel(m.gen.published,
+                                           xlim = c(-1, 1),
+                                           ylim = rev(c(45, 0)),
+                                           studlab = FALSE,
+                                           xlab = "Partial Correlation Coefficient (PCC)",
+                                           ylab = "Precision (1/SE)",
+                                           yaxis = "invse",
+                                           col = "deepskyblue4",
+                                           bg = "deepskyblue4",
+                                           cex = 0.8)
+```
+
+
+## FAT - unpublished papers
+
+```{r}
+FDII_not_published <- subset(FDII, if_published == 0)
+
+m.gen.not.published <- metagen(TE = FDII_not_published$PCC,
+                           seTE = FDII_not_published$PCC_se,
+                           studlab = FDII_not_published$citation,
+                           data = FDII_not_published,
+                           sm = "SMD",
+                           comb.fixed = FALSE,
+                           comb.random = TRUE,
+                           method.tau = "REML",
+                           hakn = TRUE,
+                           title = "FDI Impacts on Income Inequality (single country)")
+
+eggers.test(m.gen.not.published)
+
+PCC_Funnel_Graph_not_published <- metafor::funnel(m.gen.not.published,
+                                           xlim = c(-1, 1),
+                                           ylim = rev(c(45, 0)),
+                                           studlab = FALSE,
+                                           xlab = "Partial Correlation Coefficient (PCC)",
+                                           ylab = "Precision (1/SE)",
+                                           yaxis = "invse",
+                                           col = "deepskyblue4",
+                                           bg = "deepskyblue4",
+                                           cex = 0.8)
+```
+
+## FAT - core tests (from those in the permutest with p < 0.05)
+
+```{r}
+FDII_core_tests <- subset(FDII, GDP == 1 |
+                GDPpc == 1 |
+                GNI == 1 |
+                export_incentives == 1 |
+                GDPgr == 1 |
+                gov_quality == 1 |
+                unemployment == 1 |
+                `GDPpc^2` == 1 |
+                gov_exp == 1 |
+                education_middle_school_enrollment == 1 |
+                popgr == 1 |
+                financial_development == 1 |
+                labor_productivity == 1 |
+                Country_size == 1 |
+                import == 1 |
+                `GDP^2` == 1)
+
+m.gen.core.tests <- metagen(TE = FDII_core_tests$PCC,
+                       seTE = FDII_core_tests$PCC_se,
+                       studlab = FDII_core_tests$citation,
+                       data = FDII_core_tests,
+                       sm = "SMD",
+                       comb.fixed = FALSE,
+                       comb.random = TRUE,
+                       method.tau = "REML",
+                       hakn = TRUE,
+                       title = "FDI Impacts on Income Inequality (core tests)")
+
+eggers.test(m.gen.core.tests)
+
+PCC_Funnel_Graph_core_tests <- metafor::funnel(m.gen.core.tests,
+                                           xlim = c(-1, 1),
+                                           ylim = rev(c(45, 0)),
+                                           studlab = FALSE,
+                                           xlab = "Partial Correlation Coefficient (PCC)",
+                                           ylab = "Precision (1/SE)",
+                                           yaxis = "invse",
+                                           col = "deepskyblue4",
+                                           bg = "deepskyblue4",
+                                           cex = 0.8)
+```
+
+## FAT - no core tests
+
+```{r}
+FDII_no_core_tests <- subset(FDII, !(GDP == 1 | GDPpc == 1 | GNI == 1 | export_incentives == 1 | GDPgr == 1 | gov_quality == 1 | unemployment == 1 | `GDPpc^2` == 1 | gov_exp == 1 | education_middle_school_enrollment == 1 | popgr == 1 | financial_development == 1 | labor_productivity == 1 | Country_size == 1 | import == 1 | `GDP^2` == 1))
+
+m.gen.no.core.tests <- metagen(TE = FDII_no_core_tests$PCC,
+                            seTE = FDII_no_core_tests$PCC_se,
+                            studlab = FDII_no_core_tests$citation,
+                            data = FDII_no_core_tests,
+                            sm = "SMD",
+                            comb.fixed = FALSE,
+                            comb.random = TRUE,
+                            method.tau = "REML",
+                            hakn = TRUE,
+                            title = "FDI Impacts on Income Inequality (core tests)")
+
+eggers.test(m.gen.no.core.tests)
+
+PCC_Funnel_Graph_no_core_tests <- metafor::funnel(m.gen.no.core.tests,
+                                               xlim = c(-1, 1),
+                                               ylim = rev(c(45, 0)),
+                                               studlab = FALSE,
+                                               xlab = "Partial Correlation Coefficient (PCC)",
+                                               ylab = "Precision (1/SE)",
+                                               yaxis = "invse",
+                                               col = "deepskyblue4",
+                                               bg = "deepskyblue4",
+                                               cex = 0.8)
+```
+
+# Tests over time
+
+## PCC over time (to publication)
+
+```{r}
+ggplot(FDII, aes(x = publication_time, y = PCC)) +
+  geom_point(size = 1, color = "lightblue3") +
+  geom_smooth(method = "loess", col = "forestgreen") +
+  labs(title = "PCC over Time with Trend Line", x = "Publication Time", y = "PCC") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+This is super interesting, because it could be showing changes in the underlying economic phenomenon
+
+```{r}
+summary(lm(FDII$PCC ~ FDII$publication_time))
+```
+
+## PCC trend over time (average year of the sample)
+
+```{r}
+ggplot(FDII, aes(x = avg_sample_year, y = PCC)) +
+  geom_point(size = 1, color = "lightblue3") +
+  geom_smooth(method = "lm", col = "forestgreen") +
+  labs(title = "PCC over Time with Trend Line", x = "Average Sample Year", y = "PCC") +
+  theme_minimal()
+```
+We do, as expected
+
+```{r}
+summary(lm(FDII$PCC ~ FDII$avg_sample_year))
+```
+
+## Difference between publication and sample year trend
+
+```{r}
+FDII$difference <- FDII$publication_time - FDII$avg_sample_year
+
+ggplot(FDII, aes(x = difference, y = PCC)) +
+  geom_point(size = 1, color = "lightblue3") +
+  geom_smooth(method = "lm", col = "forestgreen") +
+  labs(title = "PCC over Time with Trend Line", x = "Difference from average sample year to publication year", y = "PCC") +
+  theme_minimal()
+
+summary(lm(FDII$PCC ~ FDII$difference))
+```
+
+I wanted to see whether articles that are published closer to their average sample year have greater impacts or not. I could test later whether these are heterogeneous or not. They are not statistically significant, suggesting that the recency of the article bears little-to-no weight in the likelihood of prediction. Stanley talks in the book about how papers are often quicker to publish is there are statistically-significant results.
+
+## Average sample year trend (statistical significance)
+
+```{r}
+FDII$mod_t_value <- ifelse(sqrt(FDII$t_value_calculated^2) < 8, 
+                           sqrt(FDII$t_value_calculated^2), 
+                           NA)
+
+
+ggplot(FDII, aes(x = avg_sample_year, y = mod_t_value)) +
+  geom_point(size = 1, color = "lightblue3") +
+  geom_smooth(method = "lm", col = "forestgreen") +
+  geom_hline(yintercept = 1.96, color = "maroon", linetype = "dashed") +
+  labs(title = "Statistical Significance over Time with Trend Line",
+       x = "Average Sample Year",
+       y = "t-value") +
+  theme_minimal()
+
+summary(lm(FDII$mod_t_value ~ FDII$avg_sample_year))
+
+```
+
+## Difference between publication and sample year trend (statistical significance)
+
+```{r}
+
+ggplot(FDII, aes(x = difference, y = mod_t_value)) +
+  geom_point(size = 1, color = "lightblue3") +
+  geom_smooth(method = "lm", col = "forestgreen") +
+  geom_hline(yintercept = 1.96, color = "maroon", linetype = "dashed") +
+  labs(title = "Statistical Significance over Time with Trend Line",
+       x = "Difference from average sample year to publication year",
+       y = "t-value") +
+  theme_minimal()
+
+summary(lm(FDII$mod_t_value ~ FDII$difference))
+```
+
+# Machine Learning Setup
+
+```{r}
+
+# Use World Bank API
+library(WDI)
+
+# Import CPI data
+
+## Corruption Perceptions Index data
+CPI_Corruption <- read_excel("CPI_2012-2022.xlsx")
+
+## WGI Corruption Indicators data
+WGI_Corruption <- read_excel("WGI_Corruption_Indicators.xlsx")
+## Adjust WGI data from a scale of -2.5-2.5 to 0-100
+WGI_adjustment <- WGI_Corruption[, 5:ncol(WGI_Corruption)]
+WGI_adjustment <- (WGI_adjustment + 2.5) * 20
+WGI_adjustment <- round(WGI_adjustment, 3)
+WGI_Corruption[, 5:ncol(WGI_Corruption)] <- WGI_adjustment
+```
+
+
+```{r}
+
+dat = WDI(indicator='CC.EST', country = c('CHN','FRA','GUY','USA','CAN','SWE','NPL'), start=2012, end=2022)
+
+dat$CC.EST <- (dat$CC.EST + 2.5)*20
+```
+
+
+```{r}
+ggplot(dat, aes(year, CC.EST, color=country)) + geom_line() + 
+    xlab('Year') + ylab('Corruption Prediction') + ylim(0,100)
+```
+
+```{r}
+
+```
+
+
+```{r}
+
+
+```
